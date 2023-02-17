@@ -125,15 +125,30 @@ namespace Quickstarts
                 {
                     m_output.WriteLine("Connecting to... {0}", serverUrl);
 
+                    // Normal Connect
+
                     // Get the endpoint by connecting to server's discovery endpoint.
                     // Try to find the first endopint with security.
-                    EndpointDescription endpointDescription = CoreClientUtils.SelectEndpoint(m_configuration, serverUrl, useSecurity);
+                    // EndpointDescription endpointDescription = CoreClientUtils.SelectEndpoint(m_configuration, serverUrl, useSecurity);
+                    // EndpointConfiguration endpointConfiguration = EndpointConfiguration.Create(m_configuration);
+                    // ConfiguredEndpoint endpoint = new ConfiguredEndpoint(null, endpointDescription, endpointConfiguration);
+
+                    // Reverse Connect
+
+                    EndpointDescription endpointDescription = new EndpointDescription(serverUrl);
+                    endpointDescription.Server.ApplicationUri = Utils.ReplaceLocalhost("urn:localhost:UA:Quickstarts:ReferenceServer");
+                    endpointDescription.UserIdentityTokens.Add(new UserTokenPolicy());
                     EndpointConfiguration endpointConfiguration = EndpointConfiguration.Create(m_configuration);
                     ConfiguredEndpoint endpoint = new ConfiguredEndpoint(null, endpointDescription, endpointConfiguration);
+
+                    // Create a reverse connect manager to handle reverse connections
+                    ReverseConnectManager reverseConnectManager = new ReverseConnectManager();
+                    reverseConnectManager.StartService(m_configuration);
 
                     // Create the session
                     var session = await Opc.Ua.Client.Session.Create(
                         m_configuration,
+                        reverseConnectManager,
                         endpoint,
                         false,
                         false,

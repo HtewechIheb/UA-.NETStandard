@@ -79,7 +79,17 @@
     <DiscoveryServers></DiscoveryServers>
     <MinSubscriptionLifetime>10000</MinSubscriptionLifetime>
 
-    <OperationLimits>
+    <ReverseConnect>
+        <ClientEndpoints>
+            <ClientEndpoint>
+                <EndpointUrl>opc.tcp://localhost:65300</EndpointUrl>
+            </ClientEndpoint>
+        </ClientEndpoints>
+        <HoldTime>15000</HoldTime>
+        <WaitTimeout>200000</WaitTimeout>
+    </ReverseConnect>
+
+      <OperationLimits>
       <MaxNodesPerRead>2500</MaxNodesPerRead>
       <MaxNodesPerHistoryReadData>1000</MaxNodesPerHistoryReadData>
       <MaxNodesPerHistoryReadEvents>1000</MaxNodesPerHistoryReadEvents>

@@ -241,7 +241,7 @@
     <MultiCastDnsEnabled>false</MultiCastDnsEnabled>
     
     <!--  Reverse connection parameters for aggregation server sample -->
-    <!--
+    
     <ReverseConnect>
       <Clients>
         <ReverseConnectClient>
@@ -254,8 +254,7 @@
       <ConnectTimeout>30000</ConnectTimeout>
       <RejectTimeout>60000</RejectTimeout>
     </ReverseConnect>
-    -->
-
+    
     <OperationLimits>
       <MaxNodesPerRead>2500</MaxNodesPerRead>
       <MaxNodesPerHistoryReadData>1000</MaxNodesPerHistoryReadData>
