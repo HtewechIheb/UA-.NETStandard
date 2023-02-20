@@ -86,7 +86,7 @@
             </ClientEndpoint>
         </ClientEndpoints>
         <HoldTime>15000</HoldTime>
-        <WaitTimeout>200000</WaitTimeout>
+        <WaitTimeout>20000</WaitTimeout>
     </ReverseConnect>
 
       <OperationLimits>

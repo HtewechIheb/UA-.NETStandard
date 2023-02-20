@@ -45,8 +45,9 @@ namespace Quickstarts
         /// <summary>
         /// Initializes a new instance of the UAClient class.
         /// </summary>
-        public UAClient(ApplicationConfiguration configuration, TextWriter writer, Action<IList, IList> validateResponse)
+        public UAClient(ApplicationConfiguration configuration, ReverseConnectManager reverseConnectManager, TextWriter writer, Action<IList, IList> validateResponse)
         {
+            m_reverseConnectManager = reverseConnectManager;
             m_validateResponse = validateResponse;
             m_output = writer;
             m_configuration = configuration;
@@ -141,14 +142,10 @@ namespace Quickstarts
                     EndpointConfiguration endpointConfiguration = EndpointConfiguration.Create(m_configuration);
                     ConfiguredEndpoint endpoint = new ConfiguredEndpoint(null, endpointDescription, endpointConfiguration);
 
-                    // Create a reverse connect manager to handle reverse connections
-                    ReverseConnectManager reverseConnectManager = new ReverseConnectManager();
-                    reverseConnectManager.StartService(m_configuration);
-
                     // Create the session
                     var session = await Opc.Ua.Client.Session.Create(
                         m_configuration,
-                        reverseConnectManager,
+                        m_reverseConnectManager,
                         endpoint,
                         false,
                         false,
@@ -331,6 +328,7 @@ namespace Quickstarts
         private ApplicationConfiguration m_configuration;        
         private SessionReconnectHandler m_reconnectHandler;
         private Session m_session;
+        private ReverseConnectManager m_reverseConnectManager;
         private readonly TextWriter m_output;
         private readonly Action<IList, IList> m_validateResponse;
         #endregion

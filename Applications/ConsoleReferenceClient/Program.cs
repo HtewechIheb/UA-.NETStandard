@@ -37,6 +37,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Opc.Ua;
+using Opc.Ua.Client;
 using Opc.Ua.Configuration;
 
 namespace Quickstarts.ConsoleReferenceClient
@@ -164,6 +165,11 @@ namespace Quickstarts.ConsoleReferenceClient
                 bool quit = false;
                 DateTime start = DateTime.UtcNow;
                 int waitTime = int.MaxValue;
+
+                // Create a reverse connect manager to handle reverse connections
+                ReverseConnectManager reverseConnectManager = new ReverseConnectManager();
+                reverseConnectManager.StartService(application.ApplicationConfiguration);
+
                 do
                 {
                     if (timeout > 0)
@@ -177,7 +183,7 @@ namespace Quickstarts.ConsoleReferenceClient
 
                     // create the UA Client object and connect to configured server.
                     using (UAClient uaClient = new UAClient(
-                        application.ApplicationConfiguration, output, ClientBase.ValidateResponse) {
+                        application.ApplicationConfiguration, reverseConnectManager, output, ClientBase.ValidateResponse) {
                         AutoAccept = autoAccept
                     })
                     {
