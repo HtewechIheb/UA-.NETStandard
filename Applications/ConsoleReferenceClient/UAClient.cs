@@ -245,7 +245,7 @@ namespace Quickstarts
                             Utils.LogInfo("KeepAlive status {0}, reconnecting in {1}ms.", e.Status, ReconnectPeriod);
                             m_output.WriteLine("--- RECONNECTING {0} ---", e.Status);
                             m_reconnectHandler = new SessionReconnectHandler(true);
-                            m_reconnectHandler.BeginReconnect(m_session, ReconnectPeriod, Client_ReconnectComplete);
+                            m_reconnectHandler.BeginReconnect(m_session, m_reverseConnectManager, ReconnectPeriod, Client_ReconnectComplete);
                         }
                         else
                         {
