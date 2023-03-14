@@ -290,6 +290,44 @@
         </Buffers>
       </MemoryBufferConfiguration>
     </ua:XmlElement>
+    <ua:XmlElement>
+      <RedundancyConfiguration xmlns="http://samples.org/UA/Redundancy">
+        <RedundancySettings>
+          <RedundancySupport>Cold_1</RedundancySupport>
+          <ServerUriArray>
+            <ServerUri>urn:localhost:UA:Quickstarts:ReferenceServer</ServerUri>
+            <ServerUri>urn:PC1:UA:Quickstarts:ReferenceServer</ServerUri>
+            <ServerUri>urn:PC2:UA:Quickstarts:ReferenceServer</ServerUri>
+          </ServerUriArray>
+        </RedundancySettings>
+        <RedundantServersDescriptions>
+          <ua:ApplicationDescription>
+            <ua:ApplicationUri>urn:PC1:UA:Quickstarts:ReferenceServer</ua:ApplicationUri>
+            <ua:ProductUri>uri:opcfoundation.org:Quickstarts:ReferenceServer</ua:ProductUri>
+            <ua:ApplicationName>
+              <ua:Text>Quickstart Reference Server</ua:Text>
+            </ua:ApplicationName>
+            <ua:ApplicationType>Server_0</ua:ApplicationType>
+            <ua:DiscoveryUrls>
+              <ua:String>opc.tcp://PC1:62543</ua:String>
+              <ua:String>opc.tcp://PC1:62542</ua:String>
+            </ua:DiscoveryUrls>
+          </ua:ApplicationDescription>
+          <ua:ApplicationDescription>
+            <ua:ApplicationUri>urn:PC2:UA:Quickstarts:ReferenceServer</ua:ApplicationUri>
+            <ua:ProductUri>uri:opcfoundation.org:Quickstarts:ReferenceServer</ua:ProductUri>
+            <ua:ApplicationName>
+                <ua:Text>Quickstart Reference Server</ua:Text>
+            </ua:ApplicationName>
+            <ua:ApplicationType>Server_0</ua:ApplicationType>
+            <ua:DiscoveryUrls>
+              <ua:String>opc.tcp://PC2:62545</ua:String>
+              <ua:String>opc.tcp://PC2:62544</ua:String>
+            </ua:DiscoveryUrls>
+          </ua:ApplicationDescription>
+        </RedundantServersDescriptions>
+      </RedundancyConfiguration>
+    </ua:XmlElement>
   </Extensions>
 
   <TraceConfiguration>

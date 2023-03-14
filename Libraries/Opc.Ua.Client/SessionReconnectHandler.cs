@@ -84,6 +84,11 @@ namespace Opc.Ua.Client
         public ISession Session => m_session;
 
         /// <summary>
+        /// Gets the old session that has been replaced with a new one.
+        /// </summary>
+        public ISession OldSession => m_oldSession;
+
+        /// <summary>
         /// Begins the reconnect process.
         /// </summary>
         public void BeginReconnect(ISession session, int reconnectPeriod, EventHandler callback)
@@ -104,6 +109,7 @@ namespace Opc.Ua.Client
                 }
 
                 m_session = session;
+                m_oldSession = null;
                 m_reconnectFailed = false;
                 m_reconnectPeriod = reconnectPeriod;
                 m_callback = callback;
@@ -262,6 +268,7 @@ namespace Opc.Ua.Client
                     session = await m_session.SessionFactory.RecreateAsync(m_session).ConfigureAwait(false);
                 }
                 m_session.Close();
+                m_oldSession = m_session;
                 m_session = session;
                 return true;
             }
@@ -280,6 +287,7 @@ namespace Opc.Ua.Client
         #region Private Fields
         private object m_lock = new object();
         private ISession m_session;
+        private ISession m_oldSession;
         private bool m_reconnectFailed;
         private bool m_reconnectAbort;
         private int m_reconnectPeriod;

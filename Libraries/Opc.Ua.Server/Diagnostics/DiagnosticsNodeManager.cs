@@ -182,11 +182,11 @@ namespace Opc.Ua.Server
                     setSubscriptionDurable.OnCall = OnSetSubscriptionDurable;
                 }
 #else
-                // Subscription Durable mode not supported by the server.
                 ServerObjectState serverObject = (ServerObjectState)FindPredefinedNode(
                     ObjectIds.Server,
                     typeof(ServerObjectState));
 
+                // Subscription Durable mode not supported by the server.
                 if (serverObject != null)
                 {
                     NodeState setSubscriptionDurableNode = serverObject.FindChild(
@@ -200,9 +200,7 @@ namespace Opc.Ua.Server
                     }
                 }
 #endif
-
                 // hookup server ResendData method.
-
                 ResendDataMethodState resendData = (ResendDataMethodState)FindPredefinedNode(
                     MethodIds.Server_ResendData,
                     typeof(ResendDataMethodState));
@@ -1005,6 +1003,52 @@ namespace Opc.Ua.Server
             }
 
             return nodeId;
+        }
+
+        /// <summary>
+        /// Configures non transparent redundancy for the server.
+        /// </summary>
+        public void ConfigureServerRedundancy(RedundancyConfiguration redundancyConfiguration)
+        {
+            ServerObjectState serverObject = (ServerObjectState)FindPredefinedNode(
+                    ObjectIds.Server,
+                    typeof(ServerObjectState));
+
+            if (serverObject != null)
+            {
+                if (redundancyConfiguration.RedundancySettings.RedundancySupport == RedundancySupport.Cold ||
+                    redundancyConfiguration.RedundancySettings.RedundancySupport == RedundancySupport.Warm ||
+                    redundancyConfiguration.RedundancySettings.RedundancySupport == RedundancySupport.Hot)
+                {
+                    NonTransparentRedundancyState redundancyState = new NonTransparentRedundancyState(serverObject);
+
+                    redundancyState.Create(
+                            SystemContext,
+                            null,
+                            new QualifiedName(BrowseNames.ServerRedundancy),
+                            null,
+                            false
+                        );
+
+                    redundancyState.NodeId = ObjectIds.Server_ServerRedundancy;
+                    redundancyState.RedundancySupport.NodeId = VariableIds.Server_ServerRedundancy_RedundancySupport;
+                    redundancyState.ServerUriArray.NodeId = VariableIds.Server_ServerRedundancy_ServerUriArray;
+
+                    redundancyState.NumericId = Objects.Server_ServerRedundancy;
+                    redundancyState.RedundancySupport.NumericId = Variables.Server_ServerRedundancy_RedundancySupport;
+                    redundancyState.ServerUriArray.NumericId = Variables.Server_ServerRedundancy_ServerUriArray;
+
+                    redundancyState.RedundancySupport.Value = redundancyConfiguration.RedundancySettings.RedundancySupport;
+                    redundancyState.ServerUriArray.Value = redundancyConfiguration.RedundancySettings.ServerUriArray.ToArray();
+                    redundancyState.ClearChangeMasks(SystemContext, true);
+
+                    DeleteNode(SystemContext, serverObject.ServerRedundancy.NodeId);
+                    serverObject.ServerRedundancy = null;
+
+                    AddPredefinedNode(SystemContext, redundancyState);
+                    serverObject.ReplaceChild(SystemContext, redundancyState);
+                }
+            }
         }
 
         /// <summary>

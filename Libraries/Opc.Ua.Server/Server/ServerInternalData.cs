@@ -95,6 +95,8 @@ namespace Opc.Ua.Server
             m_serverUris = new StringTable();
             m_typeTree = new TypeTable(m_namespaceUris);
 
+            ParseRedundancyConfiguration();
+
             // add the server uri to the server table.
             m_serverUris.Append(m_configuration.ApplicationUri);
 
@@ -240,6 +242,14 @@ namespace Opc.Ua.Server
         public StringTable ServerUris
         {
             get { return m_serverUris; }
+        }
+
+        /// <summary>
+        /// The non transparent redundancy configuration exposed by the server.
+        /// </summary>
+        public RedundancyConfiguration RedundancyConfiguration
+        {
+            get { return m_redundancyConfiguration; }
         }
 
         /// <summary>
@@ -564,6 +574,22 @@ namespace Opc.Ua.Server
 
         #region Private Methods
         /// <summary>
+        /// Parse redundancy configuration from application configuration.
+        /// </summary>
+        private void ParseRedundancyConfiguration()
+        {
+            m_redundancyConfiguration = m_configuration.ParseExtension<RedundancyConfiguration>();
+            for (int i = 0; i < m_redundancyConfiguration.RedundancySettings.ServerUriArray.Count; i++)
+            {
+                 m_redundancyConfiguration.RedundancySettings.ServerUriArray[i] = Utils.ReplaceLocalhost(m_redundancyConfiguration.RedundancySettings.ServerUriArray[i]);
+            }
+            foreach (ApplicationDescription server in m_redundancyConfiguration.RedundantServersDescriptions)
+            {
+                server.ApplicationUri = Utils.ReplaceLocalhost(server.ApplicationUri);
+            }
+        }
+
+        /// <summary>
         /// Creates the ServerObject and attaches it to the NodeManager.
         /// </summary>
         private void CreateServerObject()
@@ -693,6 +719,9 @@ namespace Opc.Ua.Server
                     m_defaultSystemContext,
                     m_serverDiagnostics,
                     OnUpdateDiagnostics);
+
+                // configure non transparent redundancy.
+                m_diagnosticsNodeManager.ConfigureServerRedundancy(m_redundancyConfiguration);
 
                 // set the diagnostics enabled state.
                 m_diagnosticsNodeManager.SetDiagnosticsEnabled(
@@ -853,6 +882,7 @@ namespace Opc.Ua.Server
         #region Private Fields
         private ServerProperties m_serverDescription;
         private ApplicationConfiguration m_configuration;
+        private RedundancyConfiguration m_redundancyConfiguration;
         private List<Uri> m_endpointAddresses;
         private IServiceMessageContext m_messageContext;
         private ServerSystemContext m_defaultSystemContext;

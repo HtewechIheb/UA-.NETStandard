@@ -43,7 +43,48 @@ namespace Opc.Ua.Client
         /// </summary>
         public static readonly int DefaultDiscoverTimeout = 15000;
 
+
         #region Discovery
+        /// <summary>
+        /// Calls the FindServers service on the server.
+        /// </summary>
+        /// <param name="configuration">The configuration.</param>
+        /// <param name="discoveryUrl">The discovery URL.</param>
+        /// <param name="serverUris">List of server URIs used for filtering.</param>
+        public static ApplicationDescriptionCollection FindServers(
+                ApplicationConfiguration configuration,
+                string discoveryUrl,
+                StringCollection serverUris
+            )
+        {
+            return FindServers(configuration, discoveryUrl, serverUris, DefaultDiscoverTimeout);
+        }
+
+        /// <summary>
+        /// Calls the FindServers service on the server.
+        /// </summary>
+        /// <param name="configuration">The configuration.</param>
+        /// <param name="discoveryUrl">The discovery URL.</param>
+        /// <param name="serverUris">List of server URIs used for filtering.</param>
+        /// <param name="discoverTimeout">Operation timeout in milliseconds.</param>
+        public static ApplicationDescriptionCollection FindServers(
+                ApplicationConfiguration configuration,
+                string discoveryUrl,
+                StringCollection serverUris,
+                int discoverTimeout
+            )
+        {
+            Uri uri = GetDiscoveryUrl(discoveryUrl);
+            EndpointConfiguration endpointConfiguration = EndpointConfiguration.Create();
+            endpointConfiguration.OperationTimeout = discoverTimeout;
+
+            using (DiscoveryClient client = DiscoveryClient.Create(configuration, uri, endpointConfiguration))
+            {
+                ApplicationDescriptionCollection servers = client.FindServers(serverUris);
+                return servers;
+            }
+        }
+
         /// <summary>
         /// Discovers the servers on the local machine.
         /// </summary>

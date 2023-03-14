@@ -52,6 +52,7 @@ namespace Quickstarts.ConsoleReferenceClient
         const int kMaxSearchDepth = 128;
         public ClientSamples(TextWriter output, Action<IList, IList> validateResponse, ManualResetEvent quitEvent, bool verbose = false)
         {
+            m_monitoredItemsTimestamps = new Dictionary<NodeId, DateTime>();   
             m_output = output;
             m_validateResponse = validateResponse;
             m_quitEvent = quitEvent;
@@ -278,7 +279,170 @@ namespace Quickstarts.ConsoleReferenceClient
         /// <summary>
         /// Create Subscription and MonitoredItems for DataChanges
         /// </summary>
-        public void SubscribeToDataChanges(Session session, uint minLifeTime)
+        public void SubscribeToDataChanges(UAClient client, uint minLifeTime)
+        {
+            if (client.ActiveSession == null || client.ActiveSession.Connected == false)
+            {
+                m_output.WriteLine("Session not connected!");
+                return;
+            }
+
+            try
+            {
+                // Create subscription on active server for no redundancy and cold redundancy.
+                if(client.ConfiguredRedundancy == RedundancySupport.None || client.ConfiguredRedundancy == RedundancySupport.Cold)
+                {
+                    // Create a subscription for receiving data change notifications
+
+                    // Define Subscription parameters
+                    Subscription subscription = new Subscription(client.ActiveSession.DefaultSubscription) {
+                        DisplayName = "Console ReferenceClient Subscription",
+                        PublishingInterval = 1000,
+                        LifetimeCount = 0,
+                        MinLifetimeInterval = minLifeTime,
+                    };
+
+                    client.ActiveSession.AddSubscription(subscription);
+
+                    // Create the subscription on Server side
+                    subscription.Create();
+                    m_output.WriteLine("New Subscription created with SubscriptionId = {0}.", subscription.Id);
+
+                    // Create MonitoredItems for data changes (Reference Server)
+
+                    MonitoredItem intMonitoredItem = new MonitoredItem(subscription.DefaultItem);
+                    // Int32 Node - Objects\CTT\Scalar\Simulation\Int32
+                    intMonitoredItem.StartNodeId = new NodeId("ns=2;s=Scalar_Simulation_Int32");
+                    intMonitoredItem.AttributeId = Attributes.Value;
+                    intMonitoredItem.DisplayName = "Int32 Variable";
+                    intMonitoredItem.SamplingInterval = 1000;
+                    intMonitoredItem.QueueSize = 10;
+                    intMonitoredItem.DiscardOldest = true;
+                    intMonitoredItem.Notification += OnMonitoredItemNotification;
+
+
+                    subscription.AddItem(intMonitoredItem);
+
+                    MonitoredItem floatMonitoredItem = new MonitoredItem(subscription.DefaultItem);
+                    // Float Node - Objects\CTT\Scalar\Simulation\Float
+                    floatMonitoredItem.StartNodeId = new NodeId("ns=2;s=Scalar_Simulation_Float");
+                    floatMonitoredItem.AttributeId = Attributes.Value;
+                    floatMonitoredItem.DisplayName = "Float Variable";
+                    floatMonitoredItem.SamplingInterval = 1000;
+                    floatMonitoredItem.QueueSize = 10;
+                    floatMonitoredItem.Notification += OnMonitoredItemNotification;
+
+                    subscription.AddItem(floatMonitoredItem);
+
+                    MonitoredItem stringMonitoredItem = new MonitoredItem(subscription.DefaultItem);
+                    // String Node - Objects\CTT\Scalar\Simulation\String
+                    stringMonitoredItem.StartNodeId = new NodeId("ns=2;s=Scalar_Simulation_String");
+                    stringMonitoredItem.AttributeId = Attributes.Value;
+                    stringMonitoredItem.DisplayName = "String Variable";
+                    stringMonitoredItem.SamplingInterval = 1000;
+                    stringMonitoredItem.QueueSize = 10;
+                    stringMonitoredItem.Notification += OnMonitoredItemNotification;
+
+                    subscription.AddItem(stringMonitoredItem);
+
+                    // Create the monitored items on Server side
+                    subscription.ApplyChanges();
+                    m_output.WriteLine("MonitoredItems created for SubscriptionId = {0}.", subscription.Id);
+                }
+                // Create subscription on all redundant servers for warm and hot redundancy.
+                else
+                {
+                    foreach (Session session in client.Sessions)
+                    {
+                        // Create a subscription for receiving data change notifications
+
+                        // Define Subscription parameters
+                        Subscription subscription = new Subscription(session.DefaultSubscription) {
+                            DisplayName = "Console ReferenceClient Subscription",
+                            PublishingInterval = 1000,
+                            KeepAliveCount = 5,
+                            LifetimeCount = 0,
+                            MinLifetimeInterval = minLifeTime,
+                        };
+
+                        // Enable publishing on active server only.
+                        if (session.Equals(client.ActiveSession))
+                        {
+                            subscription.PublishingEnabled = true;
+                        }
+                        else
+                        {
+                            subscription.PublishingEnabled = false;
+                        }
+
+                        session.AddSubscription(subscription);
+
+                        // Create the subscription on Server side
+                        subscription.Create();
+                        m_output.WriteLine("New Subscription created with SubscriptionId = {0}.", subscription.Id);
+
+                        // Disable monitoring on redundant servers for warm redundancy.
+                        MonitoringMode monitoringMode = monitoringMode = MonitoringMode.Reporting;
+                        if (client.ConfiguredRedundancy == RedundancySupport.Warm)
+                        {
+                            if (!session.Equals(client.ActiveSession))
+                            {
+                                monitoringMode = MonitoringMode.Disabled;
+                            }
+                        }
+
+                        // Create MonitoredItems for data changes (Reference Server)
+
+                        MonitoredItem intMonitoredItem = new MonitoredItem(subscription.DefaultItem);
+                        // Int32 Node - Objects\CTT\Scalar\Simulation\Int32
+                        intMonitoredItem.StartNodeId = new NodeId("ns=2;s=Scalar_Simulation_Int32");
+                        intMonitoredItem.AttributeId = Attributes.Value;
+                        intMonitoredItem.DisplayName = "Int32 Variable";
+                        intMonitoredItem.SamplingInterval = 1000;
+                        intMonitoredItem.QueueSize = 100;
+                        intMonitoredItem.DiscardOldest = true;
+                        intMonitoredItem.MonitoringMode = monitoringMode;
+                        intMonitoredItem.Notification += OnMonitoredItemNotification;
+
+                        subscription.AddItem(intMonitoredItem);
+
+                        MonitoredItem floatMonitoredItem = new MonitoredItem(subscription.DefaultItem);
+                        // Float Node - Objects\CTT\Scalar\Simulation\Float
+                        floatMonitoredItem.StartNodeId = new NodeId("ns=2;s=Scalar_Simulation_Float");
+                        floatMonitoredItem.AttributeId = Attributes.Value;
+                        floatMonitoredItem.DisplayName = "Float Variable";
+                        floatMonitoredItem.SamplingInterval = 1000;
+                        floatMonitoredItem.QueueSize = 100;
+                        floatMonitoredItem.MonitoringMode = monitoringMode;
+                        floatMonitoredItem.Notification += OnMonitoredItemNotification;
+
+                        subscription.AddItem(floatMonitoredItem);
+
+                        MonitoredItem stringMonitoredItem = new MonitoredItem(subscription.DefaultItem);
+                        // String Node - Objects\CTT\Scalar\Simulation\String
+                        stringMonitoredItem.StartNodeId = new NodeId("ns=2;s=Scalar_Simulation_String");
+                        stringMonitoredItem.AttributeId = Attributes.Value;
+                        stringMonitoredItem.DisplayName = "String Variable";
+                        stringMonitoredItem.SamplingInterval = 1000;
+                        stringMonitoredItem.QueueSize = 100;
+                        stringMonitoredItem.MonitoringMode = monitoringMode;
+                        stringMonitoredItem.Notification += OnMonitoredItemNotification;
+
+                        subscription.AddItem(stringMonitoredItem);
+
+                        // Create the monitored items on Server side
+                        subscription.ApplyChanges();
+                        m_output.WriteLine("MonitoredItems created for SubscriptionId = {0}.", subscription.Id);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                m_output.WriteLine("Subscribe error: {0}", ex.Message);
+            }
+        }
+
+        public void SubscribeToServiceLevel(Session session, uint minLifeTime)
         {
             if (session == null || session.Connected == false)
             {
@@ -288,11 +452,11 @@ namespace Quickstarts.ConsoleReferenceClient
 
             try
             {
-                // Create a subscription for receiving data change notifications
+                // Create a subscription for monitoring service level
 
                 // Define Subscription parameters
                 Subscription subscription = new Subscription(session.DefaultSubscription) {
-                    DisplayName = "Console ReferenceClient Subscription",
+                    DisplayName = "Console ReferenceClient Service Level Subscription",
                     PublishingEnabled = true,
                     PublishingInterval = 1000,
                     LifetimeCount = 0,
@@ -303,47 +467,24 @@ namespace Quickstarts.ConsoleReferenceClient
 
                 // Create the subscription on Server side
                 subscription.Create();
-                m_output.WriteLine("New Subscription created with SubscriptionId = {0}.", subscription.Id);
+                m_output.WriteLine("Service Level Subscription created with SubscriptionId = {0}.", subscription.Id);
 
                 // Create MonitoredItems for data changes (Reference Server)
 
-                MonitoredItem intMonitoredItem = new MonitoredItem(subscription.DefaultItem);
-                // Int32 Node - Objects\CTT\Scalar\Simulation\Int32
-                intMonitoredItem.StartNodeId = new NodeId("ns=2;s=Scalar_Simulation_Int32");
-                intMonitoredItem.AttributeId = Attributes.Value;
-                intMonitoredItem.DisplayName = "Int32 Variable";
-                intMonitoredItem.SamplingInterval = 1000;
-                intMonitoredItem.QueueSize = 10;
-                intMonitoredItem.DiscardOldest = true;
-                intMonitoredItem.Notification += OnMonitoredItemNotification;
+                MonitoredItem serviceLevelMonitoredItem = new MonitoredItem(subscription.DefaultItem);
+                serviceLevelMonitoredItem.StartNodeId = VariableIds.Server_ServiceLevel;
+                serviceLevelMonitoredItem.AttributeId = Attributes.Value;
+                serviceLevelMonitoredItem.DisplayName = "Service Level";
+                serviceLevelMonitoredItem.SamplingInterval = 1000;
+                serviceLevelMonitoredItem.QueueSize = 10;
+                serviceLevelMonitoredItem.DiscardOldest = true;
+                serviceLevelMonitoredItem.Notification += OnMonitoredItemNotification;
 
-                subscription.AddItem(intMonitoredItem);
-
-                MonitoredItem floatMonitoredItem = new MonitoredItem(subscription.DefaultItem);
-                // Float Node - Objects\CTT\Scalar\Simulation\Float
-                floatMonitoredItem.StartNodeId = new NodeId("ns=2;s=Scalar_Simulation_Float");
-                floatMonitoredItem.AttributeId = Attributes.Value;
-                floatMonitoredItem.DisplayName = "Float Variable";
-                floatMonitoredItem.SamplingInterval = 1000;
-                floatMonitoredItem.QueueSize = 10;
-                floatMonitoredItem.Notification += OnMonitoredItemNotification;
-
-                subscription.AddItem(floatMonitoredItem);
-
-                MonitoredItem stringMonitoredItem = new MonitoredItem(subscription.DefaultItem);
-                // String Node - Objects\CTT\Scalar\Simulation\String
-                stringMonitoredItem.StartNodeId = new NodeId("ns=2;s=Scalar_Simulation_String");
-                stringMonitoredItem.AttributeId = Attributes.Value;
-                stringMonitoredItem.DisplayName = "String Variable";
-                stringMonitoredItem.SamplingInterval = 1000;
-                stringMonitoredItem.QueueSize = 10;
-                stringMonitoredItem.Notification += OnMonitoredItemNotification;
-
-                subscription.AddItem(stringMonitoredItem);
+                subscription.AddItem(serviceLevelMonitoredItem);
 
                 // Create the monitored items on Server side
                 subscription.ApplyChanges();
-                m_output.WriteLine("MonitoredItems created for SubscriptionId = {0}.", subscription.Id);
+                m_output.WriteLine("Service Level MonitoredItem created for SubscriptionId = {0}.", subscription.Id);
             }
             catch (Exception ex)
             {
@@ -377,23 +518,23 @@ namespace Quickstarts.ConsoleReferenceClient
                 };
 
             // clear NodeCache to fetch all nodes from server
-            uaClient.Session.NodeCache.Clear();
+            uaClient.ActiveSession.NodeCache.Clear();
 
             // start
             stopwatch.Start();
 
             // fetch the reference types first, otherwise browse for e.g. hierarchical references with subtypes won't work
             var bindingFlags = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public;
-            var namespaceUris = uaClient.Session.NamespaceUris;
+            var namespaceUris = uaClient.ActiveSession.NamespaceUris;
             var referenceTypes = typeof(ReferenceTypeIds)
                      .GetFields(bindingFlags)
                      .Select(field => NodeId.ToExpandedNodeId((NodeId)field.GetValue(null), namespaceUris));
-            uaClient.Session.FetchTypeTree(new ExpandedNodeIdCollection(referenceTypes));
+            uaClient.ActiveSession.FetchTypeTree(new ExpandedNodeIdCollection(referenceTypes));
 
             // add root node
             if (addRootNode)
             {
-                var rootNode = uaClient.Session.NodeCache.Find(startingNode);
+                var rootNode = uaClient.ActiveSession.NodeCache.Find(startingNode);
                 nodeDictionary[rootNode.NodeId] = rootNode;
             }
 
@@ -408,7 +549,7 @@ namespace Quickstarts.ConsoleReferenceClient
 
                 searchDepth++;
                 Utils.LogInfo("{0}: Find {1} references after {2}ms", searchDepth, nodesToBrowse.Count, stopwatch.ElapsedMilliseconds);
-                var response = uaClient.Session.NodeCache.FindReferences(
+                var response = uaClient.ActiveSession.NodeCache.FindReferences(
                     nodesToBrowse,
                     references,
                     false,
@@ -528,7 +669,7 @@ namespace Quickstarts.ConsoleReferenceClient
                     repeatBrowse = false;
                     try
                     {
-                        _ = uaClient.Session.Browse(null, null,
+                        _ = uaClient.ActiveSession.Browse(null, null,
                             kMaxReferencesPerNode, browseCollection,
                             out browseResultCollection, out diagnosticsInfoCollection);
                         ClientBase.ValidateResponse(browseResultCollection, browseCollection);
@@ -594,7 +735,7 @@ namespace Quickstarts.ConsoleReferenceClient
                     }
 
                     Utils.LogInfo("BrowseNext {0} continuation points.", continuationPoints.Count);
-                    _ = uaClient.Session.BrowseNext(null, false, continuationPoints,
+                    _ = uaClient.ActiveSession.BrowseNext(null, false, continuationPoints,
                         out var browseNextResultCollection, out diagnosticsInfoCollection);
                     ClientBase.ValidateResponse(browseNextResultCollection, continuationPoints);
                     ClientBase.ValidateDiagnosticInfos(diagnosticsInfoCollection, continuationPoints);
@@ -612,7 +753,7 @@ namespace Quickstarts.ConsoleReferenceClient
                         if (!referenceDescriptions.ContainsKey(reference.NodeId))
                         {
                             referenceDescriptions[reference.NodeId] = reference;
-                            browseTable.Add(ExpandedNodeId.ToNodeId(reference.NodeId, uaClient.Session.NamespaceUris));
+                            browseTable.Add(ExpandedNodeId.ToNodeId(reference.NodeId, uaClient.ActiveSession.NamespaceUris));
                         }
                         else
                         {
@@ -721,13 +862,13 @@ namespace Quickstarts.ConsoleReferenceClient
                             try
                             {
                                 m_output.WriteLine("Read {0}", variableId);
-                                var value = await uaClient.Session.ReadValueAsync(variableId).ConfigureAwait(false);
+                                var value = await uaClient.ActiveSession.ReadValueAsync(variableId).ConfigureAwait(false);
                                 values.Add(value);
                                 errors.Add(value.StatusCode);
 
                                 if (ServiceResult.IsNotBad(value.StatusCode))
                                 {
-                                    var valueString = ClientSamples.FormatValueAsJson(uaClient.Session.MessageContext, variableId.ToString(), value, true);
+                                    var valueString = ClientSamples.FormatValueAsJson(uaClient.ActiveSession.MessageContext, variableId.ToString(), value, true);
                                     m_output.WriteLine(valueString);
                                 }
                                 else
@@ -745,14 +886,14 @@ namespace Quickstarts.ConsoleReferenceClient
                     }
                     else
                     {
-                        (values, errors) = await uaClient.Session.ReadValuesAsync(variableIds).ConfigureAwait(false);
+                        (values, errors) = await uaClient.ActiveSession.ReadValuesAsync(variableIds).ConfigureAwait(false);
 
                         int ii = 0;
                         foreach (var value in values)
                         {
                             if (ServiceResult.IsNotBad(errors[ii]))
                             {
-                                var valueString = ClientSamples.FormatValueAsJson(uaClient.Session.MessageContext, variableIds[ii].ToString(), value, true);
+                                var valueString = ClientSamples.FormatValueAsJson(uaClient.ActiveSession.MessageContext, variableIds[ii].ToString(), value, true);
                                 m_output.WriteLine(valueString);
                             }
                             else
@@ -821,13 +962,21 @@ namespace Quickstarts.ConsoleReferenceClient
         /// <summary>
         /// Handle DataChange notifications from Server
         /// </summary>
-        private void OnMonitoredItemNotification(MonitoredItem monitoredItem, MonitoredItemNotificationEventArgs e)
+        public void OnMonitoredItemNotification(MonitoredItem monitoredItem, MonitoredItemNotificationEventArgs e)
         {
+            MonitoredItemNotification notification = e.NotificationValue as MonitoredItemNotification;
+
+            if (m_monitoredItemsTimestamps.TryGetValue(monitoredItem.ResolvedNodeId, out DateTime lastTimeStamp) && lastTimeStamp >= notification.Value.SourceTimestamp)
+            {
+                return;
+            }
+
+            m_monitoredItemsTimestamps[monitoredItem.ResolvedNodeId] = notification.Value.SourceTimestamp;
+
             try
             {
                 // Log MonitoredItem Notification event
-                MonitoredItemNotification notification = e.NotificationValue as MonitoredItemNotification;
-                m_output.WriteLine("Notification: {0} \"{1}\" and Value = {2}.", notification.Message.SequenceNumber, monitoredItem.DisplayName, notification.Value);
+                //m_output.WriteLine("Notification: {0} \"{1}\" and Value = {2} and Timestamp = {3}.", notification.Message.SequenceNumber, monitoredItem.DisplayName, notification.Value, notification.Value.SourceTimestamp);
             }
             catch (Exception ex)
             {
@@ -878,5 +1027,6 @@ namespace Quickstarts.ConsoleReferenceClient
         private readonly TextWriter m_output;
         private readonly ManualResetEvent m_quitEvent;
         private readonly bool m_verbose;
+        private IDictionary<NodeId, DateTime> m_monitoredItemsTimestamps;
     }
 }

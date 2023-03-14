@@ -187,18 +187,23 @@ namespace Quickstarts.ConsoleReferenceClient
                             uaClient.UserIdentity = new UserIdentity(username, userpassword ?? string.Empty);
                         }
 
+                        using(DiscoveryClient client = DiscoveryClient.Create(serverUrl))
+                        {
+                            ApplicationDescriptionCollection servers = client.FindServers(null);
+                        }
+
                         bool connected = await uaClient.ConnectAsync(serverUrl.ToString(), false);
                         if (connected)
                         {
                             output.WriteLine("Connected! Ctrl-C to quit.");
 
                             // enable subscription transfer
-                            uaClient.Session.TransferSubscriptionsOnReconnect = true;
+                            uaClient.ActiveSession.TransferSubscriptionsOnReconnect = true;
 
                             var samples = new ClientSamples(output, ClientBase.ValidateResponse, quitEvent, verbose);
                             if (loadTypes)
                             {
-                                await samples.LoadTypeSystem(uaClient.Session).ConfigureAwait(false);
+                                await samples.LoadTypeSystem(uaClient.ActiveSession).ConfigureAwait(false);
                             }
 
                             if (browseall || fetchall || jsonvalues)
@@ -211,7 +216,7 @@ namespace Quickstarts.ConsoleReferenceClient
                                         samples.BrowseFullAddressSpace(uaClient, Objects.RootFolder);
                                     variableIds = new NodeIdCollection(referenceDescriptions
                                         .Where(r => r.NodeClass == NodeClass.Variable && r.TypeDefinition.NamespaceIndex != 0)
-                                        .Select(r => ExpandedNodeId.ToNodeId(r.NodeId, uaClient.Session.NamespaceUris)));
+                                        .Select(r => ExpandedNodeId.ToNodeId(r.NodeId, uaClient.ActiveSession.NamespaceUris)));
                                 }
 
                                 IList<INode> allNodes = null;
@@ -221,7 +226,7 @@ namespace Quickstarts.ConsoleReferenceClient
                                         uaClient, Objects.RootFolder, true, true, false);
                                     variableIds = new NodeIdCollection(allNodes
                                         .Where(r => r.NodeClass == NodeClass.Variable && ((VariableNode)r).DataType.NamespaceIndex != 0)
-                                        .Select(r => ExpandedNodeId.ToNodeId(r.NodeId, uaClient.Session.NamespaceUris)));
+                                        .Select(r => ExpandedNodeId.ToNodeId(r.NodeId, uaClient.ActiveSession.NamespaceUris)));
                                 }
 
                                 if (jsonvalues && variableIds != null)
@@ -234,16 +239,16 @@ namespace Quickstarts.ConsoleReferenceClient
                             else
                             {
                                 // Run tests for available methods on reference server.
-                                samples.ReadNodes(uaClient.Session);
-                                samples.WriteNodes(uaClient.Session);
-                                samples.Browse(uaClient.Session);
-                                samples.CallMethod(uaClient.Session);
-                                samples.SubscribeToDataChanges(uaClient.Session, 120_000);
+                                //samples.ReadNodes(uaClient.Session);
+                                //samples.WriteNodes(uaClient.Session);
+                                //samples.Browse(uaClient.Session);
+                                //samples.CallMethod(uaClient.Session);
+                                samples.SubscribeToDataChanges(uaClient, 120_000);
 
                                 output.WriteLine("Waiting...");
 
                                 // Wait for some DataChange notifications from MonitoredItems
-                                quit = quitEvent.WaitOne(timeout > 0 ? waitTime : 30_000);
+                                quit = quitEvent.WaitOne();
                             }
 
                             output.WriteLine("Client disconnected.");

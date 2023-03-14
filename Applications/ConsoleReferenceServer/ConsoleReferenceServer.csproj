@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>$(AppTargetFrameWorks)</TargetFrameworks>
+    <TargetFrameworks>net6.0</TargetFrameworks>
     <AssemblyName>ConsoleReferenceServer</AssemblyName>
     <OutputType>Exe</OutputType>
     <PackageId>ConsoleReferenceServer</PackageId>

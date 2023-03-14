@@ -29,7 +29,9 @@
 
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using Opc.Ua;
 using Opc.Ua.Client;
@@ -47,6 +49,9 @@ namespace Quickstarts
         /// </summary>
         public UAClient(ApplicationConfiguration configuration, TextWriter writer, Action<IList, IList> validateResponse)
         {
+            m_sessions = new List<Session>();
+            m_reconnectHandlers = new List<SessionReconnectHandler>();
+            m_activeServerServiceLevel = 0;
             m_validateResponse = validateResponse;
             m_output = writer;
             m_configuration = configuration;
@@ -60,7 +65,7 @@ namespace Quickstarts
         /// </summary>
         public void Dispose()
         {
-            Utils.SilentDispose(m_session);
+            Utils.SilentDispose(m_activeSession);
             m_configuration.CertificateValidator.CertificateValidation -= CertificateValidation;
         }
         #endregion
@@ -72,9 +77,24 @@ namespace Quickstarts
         Action<IList, IList> ValidateResponse => m_validateResponse;
 
         /// <summary>
-        /// Gets the client session.
+        /// Gets the application descriptions of the servers in the redundant server set.
         /// </summary>
-        public Session Session => m_session;
+        public ApplicationDescriptionCollection RedundantServerSet => m_redundantServerSet;
+
+        /// <summary>
+        /// The redundancy failover mode supported by the server.
+        /// </summary>
+        public RedundancySupport ConfiguredRedundancy => m_configuredRedundancy;
+
+        /// <summary>
+        /// Get the list of sessions associated with the client.
+        /// </summary>
+        public IList<Session> Sessions => m_sessions;
+
+        /// <summary>
+        /// Gets the active client session.
+        /// </summary>
+        public Session ActiveSession => m_activeSession;
 
         /// <summary>
         /// The session keepalive interval to be used in ms.
@@ -117,7 +137,7 @@ namespace Quickstarts
 
             try
             {
-                if (m_session != null && m_session.Connected == true)
+                if (m_activeSession != null && m_activeSession.Connected == true)
                 {
                     m_output.WriteLine("Session already connected!");
                 }
@@ -125,38 +145,27 @@ namespace Quickstarts
                 {
                     m_output.WriteLine("Connecting to... {0}", serverUrl);
 
-                    // Get the endpoint by connecting to server's discovery endpoint.
-                    // Try to find the first endopint with security.
-                    EndpointDescription endpointDescription = CoreClientUtils.SelectEndpoint(m_configuration, serverUrl, useSecurity);
-                    EndpointConfiguration endpointConfiguration = EndpointConfiguration.Create(m_configuration);
-                    ConfiguredEndpoint endpoint = new ConfiguredEndpoint(null, endpointDescription, endpointConfiguration);
-
-                    // Create the session
-                    var session = await Opc.Ua.Client.Session.Create(
-                        m_configuration,
-                        endpoint,
-                        false,
-                        false,
-                        m_configuration.ApplicationName,
-                        SessionLifeTime,
-                        UserIdentity,
-                        null
-                    ).ConfigureAwait(false);
+                    Session session = await SelectEndpointAndCreateSession(serverUrl, useSecurity);
 
                     // Assign the created session
                     if (session != null && session.Connected)
                     {
-                        m_session = session;
+                        m_configuredRedundancy = ReadRedundancyConfiguration(session);
 
+                        m_activeSession = session;
                         // override keep alive interval
-                        m_session.KeepAliveInterval = KeepAliveInterval;
-
+                        m_activeSession.KeepAliveInterval = KeepAliveInterval;
                         // set up keep alive callback.
-                        m_session.KeepAlive += Session_KeepAlive;
+                        m_activeSession.KeepAlive += Session_KeepAlive;
+
+                        if (m_configuredRedundancy != RedundancySupport.None)
+                        {
+                            SetupRedundancy(useSecurity);
+                        }
                     }
 
                     // Session created successfully.
-                    m_output.WriteLine("New Session Created with SessionName = {0}", m_session.SessionName);
+                    m_output.WriteLine("New Session Created with SessionName = {0}", m_activeSession.SessionName);
                 }
 
                 return true;
@@ -176,19 +185,23 @@ namespace Quickstarts
         {
             try
             {
-                if (m_session != null)
+                if (m_activeSession != null)
                 {
                     m_output.WriteLine("Disconnecting...");
 
                     lock (m_lock)
                     {
-                        m_session.KeepAlive -= Session_KeepAlive;
-                        m_reconnectHandler?.Dispose();
+                        m_activeSession.KeepAlive -= Session_KeepAlive;
+                        foreach(SessionReconnectHandler reconnectHandler in m_reconnectHandlers)
+                        {
+                            reconnectHandler.Dispose();
+                        }
                     }
 
-                    m_session.Close();
-                    m_session.Dispose();
-                    m_session = null;
+                    m_activeSession.Close();
+                    m_activeSession.Dispose();
+                    m_activeSession = null;
+                    m_reconnectHandlers.Clear();
 
                     // Log Session Disconnected event
                     m_output.WriteLine("Session Disconnected.");
@@ -203,77 +216,6 @@ namespace Quickstarts
                 // Log Error
                 m_output.WriteLine($"Disconnect Error : {ex.Message}");
             }
-        }
-        /// <summary>
-        /// Handles a keep alive event from a session and triggers a reconnect if necessary.
-        /// </summary>
-        private void Session_KeepAlive(ISession session, KeepAliveEventArgs e)
-        {
-            try
-            {
-                // check for events from discarded sessions.
-                if (!Object.ReferenceEquals(session, m_session))
-                {
-                    return;
-                }
-
-                // start reconnect sequence on communication error.
-                if (ServiceResult.IsBad(e.Status))
-                {
-                    if (ReconnectPeriod <= 0)
-                    {
-                        Utils.LogWarning("KeepAlive status {0}, but reconnect is disabled.", e.Status);
-                        return;
-                    }
-
-                    lock (m_lock)
-                    {
-                        if (m_reconnectHandler == null)
-                        {
-                            Utils.LogInfo("KeepAlive status {0}, reconnecting in {1}ms.", e.Status, ReconnectPeriod);
-                            m_output.WriteLine("--- RECONNECTING {0} ---", e.Status);
-                            m_reconnectHandler = new SessionReconnectHandler(true);
-                            m_reconnectHandler.BeginReconnect(m_session, ReconnectPeriod, Client_ReconnectComplete);
-                        }
-                        else
-                        {
-                            Utils.LogInfo("KeepAlive status {0}, reconnect in progress.", e.Status);
-                        }
-                    }
-
-                    return;
-                }
-            }
-            catch (Exception exception)
-            {
-                Utils.LogError(exception, "Error in OnKeepAlive.");
-            }
-        }
-
-        /// <summary>
-        /// Called when the reconnect attempt was successful.
-        /// </summary>
-        private void Client_ReconnectComplete(object sender, EventArgs e)
-        {
-            // ignore callbacks from discarded objects.
-            if (!Object.ReferenceEquals(sender, m_reconnectHandler))
-            {
-                return;
-            }
-
-            lock (m_lock)
-            {
-                // if session recovered, Session property is null
-                if (m_reconnectHandler.Session != null)
-                {
-                    m_session = m_reconnectHandler.Session as Session;
-                }
-
-                m_reconnectHandler.Dispose();
-                m_reconnectHandler = null;
-            }
-
-            m_output.WriteLine("--- RECONNECTED ---");
         }
         #endregion
 
@@ -311,11 +253,313 @@ namespace Quickstarts
         }
         #endregion
 
+        #region Private Methods
+        /// <summary>
+        /// Handles a keep alive event from a session and triggers a failover or reconnect if necessary.
+        /// </summary>
+        private async void Session_KeepAlive(ISession session, KeepAliveEventArgs e)
+        {
+            try
+            {
+                // check for events from discarded sessions.
+                if (!Object.ReferenceEquals(session, m_activeSession) && !m_sessions.Any(storedSession => Object.ReferenceEquals(session, storedSession)))
+                {
+                    return;
+                }
+
+                // start reconnect sequence on communication error.
+                if (ServiceResult.IsBad(e.Status))
+                {
+                    // failover to redundant server if connection with active server is lost.
+                    if (Object.ReferenceEquals(session, m_activeSession))
+                    {
+                        if (ConfiguredRedundancy == RedundancySupport.Cold)
+                        {
+                            Utils.LogInfo("COLD REDUNDANCY: Connection with primary server was lost. Failing over to a redundant server...");
+                            m_output.WriteLine("COLD REDUNDANCY: Connection with primary server was lost. Failing over to a redundant server...");
+
+                            string uriScheme = new Uri(session.Endpoint.EndpointUrl).Scheme;
+                            ApplicationDescriptionCollection otherServers = m_redundantServerSet.Where(server => server.ApplicationUri != session.Endpoint.Server.ApplicationUri).ToArray();
+                            foreach (ApplicationDescription server in otherServers)
+                            {
+                                string discoveryUrl = server.DiscoveryUrls.FirstOrDefault(url => new Uri(url).Scheme == uriScheme);
+
+                                Session newSession = await SelectEndpointAndCreateSession(discoveryUrl, false);
+
+                                if (newSession != null && newSession.Connected)
+                                {
+                                    foreach (Subscription subscription in session.Subscriptions)
+                                    {
+                                        Subscription copy = new Subscription(subscription, true);
+                                        newSession.AddSubscription(copy);
+                                        copy.Create();
+                                        copy.ApplyChanges();
+                                    }
+
+                                    m_activeSession = newSession;
+                                    // override keep alive interval
+                                    m_activeSession.KeepAliveInterval = KeepAliveInterval;
+                                    // set up keep alive callback.
+                                    m_activeSession.KeepAlive += Session_KeepAlive;
+
+                                    m_output.WriteLine("Failover succeeded.");
+                                }
+                            }
+                        }
+                        else if (ConfiguredRedundancy == RedundancySupport.Warm)
+                        {
+                            Utils.LogInfo("WARM REDUNDANCY: Connection with primary server was lost. Failing over to a redundant server...");
+                            m_output.WriteLine("WARM REDUNDANCY: Connection with primary server was lost. Failing over to a redundant server...");
+
+                            Session connectedStandbySession = m_sessions
+                                .FirstOrDefault(storedSession => !Object.ReferenceEquals(storedSession, session)
+                                    && storedSession.Connected
+                                    && !m_reconnectHandlers.Any(reconnectHandler => Object.ReferenceEquals(reconnectHandler.Session, storedSession)));
+                            if (connectedStandbySession != null)
+                            {
+                                m_activeSession = connectedStandbySession;
+                                foreach (Subscription subscription in m_activeSession.Subscriptions)
+                                {
+                                    subscription.SetMonitoringMode(MonitoringMode.Reporting, subscription.MonitoredItems.ToList());
+                                    subscription.SetPublishingMode(true);
+                                }
+
+                                m_output.WriteLine("Failover succeeded.");
+                            }
+                            else
+                            {
+                                m_output.WriteLine("Failover failed.");
+                            }
+                        }
+                        else if (ConfiguredRedundancy == RedundancySupport.Hot)
+                        {
+                            Utils.LogInfo("HOT REDUNDANCY: Connection with primary server was lost. Failing over to a redundant server...");
+                            m_output.WriteLine("HOT REDUNDANCY: Connection with primary server was lost. Failing over to a redundant server...");
+
+                            Session connectedStandbySession = m_sessions
+                                .FirstOrDefault(storedSession => !Object.ReferenceEquals(storedSession, session)
+                                    && storedSession.Connected
+                                    && !m_reconnectHandlers.Any(reconnectHandler => Object.ReferenceEquals(reconnectHandler.Session, storedSession)));
+                            if (connectedStandbySession != null)
+                            {
+                                m_activeSession = connectedStandbySession;
+                                foreach (Subscription subscription in m_activeSession.Subscriptions)
+                                {
+                                    subscription.SetPublishingMode(true);
+                                }
+
+                                m_output.WriteLine("Failover succeeded.");
+                            }
+                            else
+                            {
+                                m_output.WriteLine("Failover failed.");
+                            }
+                        }
+                    }
+
+                    // start reconnect sequence.
+                    if (ReconnectPeriod <= 0)
+                    {
+                        Utils.LogWarning("KeepAlive status {0}, but reconnect is disabled.", e.Status);
+                    }
+                    else
+                    {
+                        lock (m_lock)
+                        {
+                            if (!m_reconnectHandlers.Any(reconnectHandler => Object.ReferenceEquals(reconnectHandler.Session, session)))
+                            {
+                                Utils.LogInfo("KeepAlive status {0}, reconnecting in {1}ms.", e.Status, ReconnectPeriod);
+                                m_output.WriteLine("--- RECONNECTING {0} ---", e.Status);
+                                SessionReconnectHandler reconnectHandler = new SessionReconnectHandler(true);
+                                reconnectHandler.BeginReconnect(session, ReconnectPeriod, Client_ReconnectComplete);
+                                m_reconnectHandlers.Add(reconnectHandler);
+                            }
+                            else
+                            {
+                                Utils.LogInfo("KeepAlive status {0}, reconnect in progress.", e.Status);
+                            }
+                        }
+                    }
+
+                    return;
+                }
+            }
+            catch (Exception exception)
+            {
+                Utils.LogError(exception, "Error in OnKeepAlive.");
+            }
+        }
+
+        /// <summary>
+        /// Called when the reconnect attempt was successful.
+        /// </summary>
+        private void Client_ReconnectComplete(object sender, EventArgs e)
+        {
+            // ignore callbacks from discarded objects.
+            if (!m_reconnectHandlers.Any(reconnectHandler => Object.ReferenceEquals(sender, reconnectHandler)))
+            {
+                return;
+            }
+
+            lock (m_lock)
+            {
+                SessionReconnectHandler reconnectHandler = sender as SessionReconnectHandler;
+
+                // if session recovered, Session property is null
+                if (reconnectHandler.Session != null)
+                {
+                    Session oldSession = reconnectHandler.OldSession as Session;
+                    Session newSession = reconnectHandler.Session as Session;
+
+                    if (Object.ReferenceEquals(m_activeSession, oldSession))
+                    {
+                        m_activeSession = newSession;
+                    }
+                    else
+                    {
+                        int sessionIndex = m_sessions.IndexOf(oldSession);
+                        if (sessionIndex != -1)
+                        {
+                            m_sessions[sessionIndex] = newSession;
+                        }
+                    }
+                }
+
+                reconnectHandler.Dispose();
+                m_reconnectHandlers.Remove(reconnectHandler);
+            }
+
+            m_output.WriteLine("--- RECONNECTED ---");
+        }
+
+        /// <summary>
+        /// Reads redundant server set and performs redundancy setup actions according to failover mode.
+        /// </summary>
+        /// <param name="useSecurity">If set to <c>true</c> select an endpoint that uses security.</param>
+        private async void SetupRedundancy(bool useSecurity = true)
+        {
+            // Get the descriptions of the servers in the redundant server set.
+            m_redundantServerSet = CoreClientUtils.FindServers(m_configuration, m_activeSession.Endpoint.EndpointUrl, null);
+
+            // Create sessions with redundant servers for warm and hot failover modes.
+            // And set server with highest service level as active server.
+            if (m_configuredRedundancy == RedundancySupport.Warm || m_configuredRedundancy == RedundancySupport.Hot)
+            {
+                m_activeServerServiceLevel = ReadServiceLevel(m_activeSession);
+                m_sessions.Add(m_activeSession);
+
+                // Skip the active server.
+                ApplicationDescriptionCollection otherServers = m_redundantServerSet.Where(server => server.ApplicationUri != m_activeSession.Endpoint.Server.ApplicationUri).ToArray();
+
+                string uriScheme = new Uri(m_activeSession.Endpoint.EndpointUrl).Scheme;
+                foreach (ApplicationDescription server in otherServers)
+                {
+                    string discoveryUrl = server.DiscoveryUrls.FirstOrDefault(url => new Uri(url).Scheme == uriScheme);
+
+                    Session session = await SelectEndpointAndCreateSession(discoveryUrl, useSecurity);
+
+                    // Set the session as the active one if its service level is higher
+                    if (session != null && session.Connected)
+                    {
+                        byte serviceLevel = ReadServiceLevel(session);
+                        session.KeepAliveInterval = KeepAliveInterval;
+                        session.KeepAlive += Session_KeepAlive;
+                        if (serviceLevel > m_activeServerServiceLevel)
+                        {
+                            m_activeServerServiceLevel = serviceLevel;
+                            m_activeSession = session;
+                        }
+
+                        m_sessions.Add(session);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Selects the endpoint that best matches the current settings and uses it to create a session.
+        /// </summary>
+        /// <param name="discoveryUrl">The discovery URL of the server.</param>
+        /// <param name="useSecurity">If set to <c>true</c> select an endpoint that uses security.</param>
+        /// <returns>The created session.</returns>
+        private async Task<Session> SelectEndpointAndCreateSession(string discoveryUrl, bool useSecurity = true)
+        {
+            EndpointDescription endpointDescription = CoreClientUtils.SelectEndpoint(m_configuration, discoveryUrl, useSecurity);
+            EndpointConfiguration endpointConfiguration = EndpointConfiguration.Create(m_configuration);
+            ConfiguredEndpoint endpoint = new ConfiguredEndpoint(null, endpointDescription, endpointConfiguration);
+
+            return await Opc.Ua.Client.Session.Create(
+                m_configuration,
+                endpoint,
+                false,
+                false,
+                m_configuration.ApplicationName,
+                SessionLifeTime,
+                UserIdentity,
+                null
+            ).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Reads the RedundancySupport property value from the server.
+        /// </summary>
+        /// <param name="session">The session to use.</param>
+        /// <returns>The RedundancySupport value.</returns>
+        private RedundancySupport ReadRedundancyConfiguration(Session session)
+        {
+            ReadValueIdCollection nodesToRead = new ReadValueIdCollection {
+                new ReadValueId { NodeId = VariableIds.Server_ServerRedundancy_RedundancySupport, AttributeId = Attributes.Value }
+            };
+
+            session.Read(
+                    null,
+                    0,
+                    TimestampsToReturn.Both,
+                    nodesToRead,
+                    out DataValueCollection resultsValues,
+                    out DiagnosticInfoCollection diagnosticInfos
+                );
+
+            m_validateResponse(resultsValues, nodesToRead);
+
+            return (RedundancySupport)resultsValues[0].Value;
+        }
+
+        /// <summary>
+        /// Reads the ServiceLevel property value from the server.
+        /// </summary>
+        /// <param name="session">The session to use.</param>
+        /// <returns>The ServiceLevel value.</returns>
+        private byte ReadServiceLevel(Session session)
+        {
+            ReadValueIdCollection nodesToRead = new ReadValueIdCollection {
+                new ReadValueId { NodeId = VariableIds.Server_ServiceLevel, AttributeId = Attributes.Value }
+            };
+
+            session.Read(
+                    null,
+                    0,
+                    TimestampsToReturn.Both,
+                    nodesToRead,
+                    out DataValueCollection resultsValues,
+                    out DiagnosticInfoCollection diagnosticInfos
+                );
+
+            m_validateResponse(resultsValues, nodesToRead);
+
+            return (byte)resultsValues[0].Value;
+        }
+        #endregion
+
         #region Private Fields
         private object m_lock = new object();
         private ApplicationConfiguration m_configuration;        
-        private SessionReconnectHandler m_reconnectHandler;
-        private Session m_session;
+        private IList<SessionReconnectHandler> m_reconnectHandlers;
+        private ApplicationDescriptionCollection m_redundantServerSet;
+        private RedundancySupport m_configuredRedundancy;
+        private IList<Session> m_sessions;
+        private Session m_activeSession;
+        private byte m_activeServerServiceLevel;
         private readonly TextWriter m_output;
         private readonly Action<IList, IList> m_validateResponse;
         #endregion

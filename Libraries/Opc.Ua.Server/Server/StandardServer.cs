@@ -177,6 +177,51 @@ namespace Opc.Ua.Server
                     // add to list of servers to return.
                     servers.Add(application);
                 }
+
+                foreach(ApplicationDescription server in m_serverInternal.RedundancyConfiguration.RedundantServersDescriptions)
+                {
+                    // skip servers that have been processed.
+                    if (uniqueServers.ContainsKey(server.ApplicationUri))
+                    {
+                        continue;
+                    }
+
+                    // check client is filtering by server uri.
+                    if (serverUris != null && serverUris.Count > 0)
+                    {
+                        if (!serverUris.Contains(server.ApplicationUri))
+                        {
+                            continue;
+                        }
+                    }
+
+                    // localize the application name if requested.
+                    LocalizedText applicationName = server.ApplicationName;
+
+                    if (localeIds != null && localeIds.Count > 0)
+                    {
+                        applicationName = m_serverInternal.ResourceManager.Translate(localeIds, applicationName);
+                    }
+
+                    // This is simply a read scenario. Thus no deep copy.
+                    ApplicationDescription application = new ApplicationDescription();
+                    application.ApplicationName = server.ApplicationName;
+                    application.ApplicationUri = server.ApplicationUri;
+                    application.ApplicationType = server.ApplicationType;
+                    application.ProductUri = server.ProductUri;
+                    application.GatewayServerUri = server.DiscoveryProfileUri;
+                    application.DiscoveryUrls = server.DiscoveryUrls;
+
+                    if (!LocalizedText.IsNullOrEmpty(applicationName))
+                    {
+                        application.ApplicationName = applicationName;
+                    }
+
+                    uniqueServers.Add(application.ApplicationUri, application);
+
+                    // add to list of servers to return.
+                    servers.Add(application);
+                }
             }
 
             return CreateResponse(requestHeader, StatusCodes.Good);
