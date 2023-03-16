@@ -32,6 +32,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Opc.Ua;
 using Opc.Ua.Client;
@@ -257,7 +258,7 @@ namespace Quickstarts
         /// <summary>
         /// Handles a keep alive event from a session and triggers a failover or reconnect if necessary.
         /// </summary>
-        private async void Session_KeepAlive(ISession session, KeepAliveEventArgs e)
+        private void Session_KeepAlive(ISession session, KeepAliveEventArgs e)
         {
             try
             {
@@ -271,90 +272,9 @@ namespace Quickstarts
                 if (ServiceResult.IsBad(e.Status))
                 {
                     // failover to redundant server if connection with active server is lost.
-                    if (Object.ReferenceEquals(session, m_activeSession))
+                    if (Object.ReferenceEquals(session, m_activeSession) && ConfiguredRedundancy != RedundancySupport.None && m_failoverTimer == null)
                     {
-                        if (ConfiguredRedundancy == RedundancySupport.Cold)
-                        {
-                            Utils.LogInfo("COLD REDUNDANCY: Connection with primary server was lost. Failing over to a redundant server...");
-                            m_output.WriteLine("COLD REDUNDANCY: Connection with primary server was lost. Failing over to a redundant server...");
-
-                            string uriScheme = new Uri(session.Endpoint.EndpointUrl).Scheme;
-                            ApplicationDescriptionCollection otherServers = m_redundantServerSet.Where(server => server.ApplicationUri != session.Endpoint.Server.ApplicationUri).ToArray();
-                            foreach (ApplicationDescription server in otherServers)
-                            {
-                                string discoveryUrl = server.DiscoveryUrls.FirstOrDefault(url => new Uri(url).Scheme == uriScheme);
-
-                                Session newSession = await SelectEndpointAndCreateSession(discoveryUrl, false);
-
-                                if (newSession != null && newSession.Connected)
-                                {
-                                    foreach (Subscription subscription in session.Subscriptions)
-                                    {
-                                        Subscription copy = new Subscription(subscription, true);
-                                        newSession.AddSubscription(copy);
-                                        copy.Create();
-                                        copy.ApplyChanges();
-                                    }
-
-                                    m_activeSession = newSession;
-                                    // override keep alive interval
-                                    m_activeSession.KeepAliveInterval = KeepAliveInterval;
-                                    // set up keep alive callback.
-                                    m_activeSession.KeepAlive += Session_KeepAlive;
-
-                                    m_output.WriteLine("Failover succeeded.");
-                                }
-                            }
-                        }
-                        else if (ConfiguredRedundancy == RedundancySupport.Warm)
-                        {
-                            Utils.LogInfo("WARM REDUNDANCY: Connection with primary server was lost. Failing over to a redundant server...");
-                            m_output.WriteLine("WARM REDUNDANCY: Connection with primary server was lost. Failing over to a redundant server...");
-
-                            Session connectedStandbySession = m_sessions
-                                .FirstOrDefault(storedSession => !Object.ReferenceEquals(storedSession, session)
-                                    && storedSession.Connected
-                                    && !m_reconnectHandlers.Any(reconnectHandler => Object.ReferenceEquals(reconnectHandler.Session, storedSession)));
-                            if (connectedStandbySession != null)
-                            {
-                                m_activeSession = connectedStandbySession;
-                                foreach (Subscription subscription in m_activeSession.Subscriptions)
-                                {
-                                    subscription.SetMonitoringMode(MonitoringMode.Reporting, subscription.MonitoredItems.ToList());
-                                    subscription.SetPublishingMode(true);
-                                }
-
-                                m_output.WriteLine("Failover succeeded.");
-                            }
-                            else
-                            {
-                                m_output.WriteLine("Failover failed.");
-                            }
-                        }
-                        else if (ConfiguredRedundancy == RedundancySupport.Hot)
-                        {
-                            Utils.LogInfo("HOT REDUNDANCY: Connection with primary server was lost. Failing over to a redundant server...");
-                            m_output.WriteLine("HOT REDUNDANCY: Connection with primary server was lost. Failing over to a redundant server...");
-
-                            Session connectedStandbySession = m_sessions
-                                .FirstOrDefault(storedSession => !Object.ReferenceEquals(storedSession, session)
-                                    && storedSession.Connected
-                                    && !m_reconnectHandlers.Any(reconnectHandler => Object.ReferenceEquals(reconnectHandler.Session, storedSession)));
-                            if (connectedStandbySession != null)
-                            {
-                                m_activeSession = connectedStandbySession;
-                                foreach (Subscription subscription in m_activeSession.Subscriptions)
-                                {
-                                    subscription.SetPublishingMode(true);
-                                }
-
-                                m_output.WriteLine("Failover succeeded.");
-                            }
-                            else
-                            {
-                                m_output.WriteLine("Failover failed.");
-                            }
-                        }
+                        m_failoverTimer = new Timer(OnFailover, null, 0, 5000);
                     }
 
                     // start reconnect sequence.
@@ -380,13 +300,111 @@ namespace Quickstarts
                             }
                         }
                     }
-
-                    return;
                 }
             }
             catch (Exception exception)
             {
                 Utils.LogError(exception, "Error in OnKeepAlive.");
+            }
+        }
+
+        private async void OnFailover(object state)
+        {
+            if (ConfiguredRedundancy == RedundancySupport.Cold)
+            {
+                Utils.LogInfo("COLD REDUNDANCY: Connection with primary server was lost. Failing over to a redundant server...");
+                m_output.WriteLine("COLD REDUNDANCY: Connection with primary server was lost. Failing over to a redundant server...");
+                
+                string uriScheme = new Uri(m_activeSession.Endpoint.EndpointUrl).Scheme;
+                ApplicationDescriptionCollection otherServers = m_redundantServerSet.Where(server => server.ApplicationUri != m_activeSession.Endpoint.Server.ApplicationUri).ToArray();
+                foreach (ApplicationDescription server in otherServers)
+                {
+                    string discoveryUrl = server.DiscoveryUrls.FirstOrDefault(url => new Uri(url).Scheme == uriScheme);
+
+                    Session newSession = await SelectEndpointAndCreateSession(discoveryUrl, false);
+
+                    if (newSession != null && newSession.Connected)
+                    {
+                        lock (m_lock)
+                        {
+                            foreach (Subscription subscription in m_activeSession.Subscriptions)
+                            {
+                                Subscription copy = new Subscription(subscription, true);
+                                newSession.AddSubscription(copy);
+                                copy.Create();
+                                copy.ApplyChanges();
+                            }
+
+                            m_activeSession = newSession;
+                            // override keep alive interval
+                            m_activeSession.KeepAliveInterval = KeepAliveInterval;
+                            // set up keep alive callback.
+                            m_activeSession.KeepAlive += Session_KeepAlive;
+
+                            m_failoverTimer?.Dispose();
+                            m_failoverTimer = null;
+                        }
+
+                        m_output.WriteLine("Failover succeeded.");
+                    }
+                }
+            }
+            else if (ConfiguredRedundancy == RedundancySupport.Warm)
+            {
+                Utils.LogInfo("WARM REDUNDANCY: Connection with primary server was lost. Failing over to a redundant server...");
+                m_output.WriteLine("WARM REDUNDANCY: Connection with primary server was lost. Failing over to a redundant server...");
+
+                Session connectedStandbySession = m_sessions
+                    .FirstOrDefault(storedSession => storedSession.Connected
+                        && !m_reconnectHandlers.Any(reconnectHandler => Object.ReferenceEquals(reconnectHandler.Session, storedSession)));
+                if (connectedStandbySession != null)
+                {
+                    lock (m_lock)
+                    {
+                        m_activeSession = connectedStandbySession;
+                        foreach (Subscription subscription in m_activeSession.Subscriptions)
+                        {
+                            subscription.SetMonitoringMode(MonitoringMode.Reporting, subscription.MonitoredItems.ToList());
+                            subscription.SetPublishingMode(true);
+                        }
+
+                        m_failoverTimer?.Dispose();
+                        m_failoverTimer = null;
+                    }
+                    m_output.WriteLine("Failover succeeded.");
+                }
+                else
+                {
+                    m_output.WriteLine("Failover failed.");
+                }
+            }
+            else if (ConfiguredRedundancy == RedundancySupport.Hot)
+            {
+                Utils.LogInfo("HOT REDUNDANCY: Connection with primary server was lost. Failing over to a redundant server...");
+                m_output.WriteLine("HOT REDUNDANCY: Connection with primary server was lost. Failing over to a redundant server...");
+                    
+                Session connectedStandbySession = m_sessions
+                    .FirstOrDefault(storedSession => storedSession.Connected
+                        && !m_reconnectHandlers.Any(reconnectHandler => Object.ReferenceEquals(reconnectHandler.Session, storedSession)));
+                if (connectedStandbySession != null)
+                {
+                    lock (m_lock)
+                    {
+                        m_activeSession = connectedStandbySession;
+                        foreach (Subscription subscription in m_activeSession.Subscriptions)
+                        {
+                            subscription.SetPublishingMode(true);
+                        }
+
+                        m_failoverTimer?.Dispose();
+                        m_failoverTimer = null;
+                    }
+                    m_output.WriteLine("Failover succeeded.");
+                }
+                else
+                {
+                    m_output.WriteLine("Failover failed.");
+                }
             }
         }
 
@@ -411,11 +429,13 @@ namespace Quickstarts
                     Session oldSession = reconnectHandler.OldSession as Session;
                     Session newSession = reconnectHandler.Session as Session;
 
-                    if (Object.ReferenceEquals(m_activeSession, oldSession))
+                    if(Object.ReferenceEquals(m_activeSession, oldSession)
+                        && (ConfiguredRedundancy == RedundancySupport.None || ConfiguredRedundancy == RedundancySupport.Cold))
                     {
                         m_activeSession = newSession;
                     }
-                    else
+
+                    if(ConfiguredRedundancy == RedundancySupport.Warm || ConfiguredRedundancy == RedundancySupport.Hot)
                     {
                         int sessionIndex = m_sessions.IndexOf(oldSession);
                         if (sessionIndex != -1)
@@ -553,7 +573,8 @@ namespace Quickstarts
 
         #region Private Fields
         private object m_lock = new object();
-        private ApplicationConfiguration m_configuration;        
+        private ApplicationConfiguration m_configuration;
+        private Timer m_failoverTimer;
         private IList<SessionReconnectHandler> m_reconnectHandlers;
         private ApplicationDescriptionCollection m_redundantServerSet;
         private RedundancySupport m_configuredRedundancy;

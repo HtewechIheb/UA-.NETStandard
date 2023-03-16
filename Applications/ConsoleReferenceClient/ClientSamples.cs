@@ -976,7 +976,7 @@ namespace Quickstarts.ConsoleReferenceClient
             try
             {
                 // Log MonitoredItem Notification event
-                //m_output.WriteLine("Notification: {0} \"{1}\" and Value = {2} and Timestamp = {3}.", notification.Message.SequenceNumber, monitoredItem.DisplayName, notification.Value, notification.Value.SourceTimestamp);
+                m_output.WriteLine("Notification: {0} \"{1}\" and Value = {2} and Timestamp = {3}.", notification.Message.SequenceNumber, monitoredItem.DisplayName, notification.Value, notification.Value.SourceTimestamp);
             }
             catch (Exception ex)
             {

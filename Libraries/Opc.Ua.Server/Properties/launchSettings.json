@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "Opc.Ua.Server": {
+      "commandName": "Project"
+    },
+    "Profile 1": {
+      "commandName": "Project"
+    }
+  }
+}
