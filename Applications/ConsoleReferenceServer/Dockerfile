@@ -5,7 +5,7 @@ FROM mcr.microsoft.com/dotnet/sdk:6.0-bullseye-slim AS build
 WORKDIR /src
 
 # copy csproj and restore as distinct layers
-COPY *.* .
+COPY *.* ./
 COPY ["Applications/ConsoleReferenceServer/ConsoleReferenceServer.csproj", "Applications/ConsoleReferenceServer/"]
 COPY ["Stack/Opc.Ua.Core/Opc.Ua.Core.csproj", "Stack/Opc.Ua.Core/"]
 COPY ["Libraries/Opc.Ua.Security.Certificates/Opc.Ua.Security.Certificates.csproj", "Libraries/Opc.Ua.Security.Certificates/"]
